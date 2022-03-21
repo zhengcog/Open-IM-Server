@@ -1,16 +1,20 @@
 package chat
 
 import (
-	"Open_IM/pkg/common/config"
-	"Open_IM/pkg/common/kafka"
-	"Open_IM/pkg/common/log"
-	"Open_IM/pkg/grpc-etcdv3/getcdv3"
-	pbChat "Open_IM/pkg/proto/chat"
-	"Open_IM/pkg/utils"
-	"google.golang.org/grpc"
+	"Open_IM/pkg/common/mq/nsq"
 	"net"
 	"strconv"
 	"strings"
+
+	"Open_IM/pkg/common/config"
+	"Open_IM/pkg/common/log"
+	"Open_IM/pkg/common/mq"
+	"Open_IM/pkg/common/mq/kafka"
+	"Open_IM/pkg/grpc-etcdv3/getcdv3"
+	pbChat "Open_IM/pkg/proto/chat"
+	"Open_IM/pkg/utils"
+
+	"google.golang.org/grpc"
 )
 
 type rpcChat struct {
@@ -18,7 +22,7 @@ type rpcChat struct {
 	rpcRegisterName string
 	etcdSchema      string
 	etcdAddr        []string
-	producer        *kafka.Producer
+	producer        mq.Producer
 }
 
 func NewRpcChatServer(port int) *rpcChat {
@@ -29,7 +33,17 @@ func NewRpcChatServer(port int) *rpcChat {
 		etcdSchema:      config.Config.Etcd.EtcdSchema,
 		etcdAddr:        config.Config.Etcd.EtcdAddr,
 	}
-	rc.producer = kafka.NewKafkaProducer(config.Config.Kafka.Ws2mschat.Addr, config.Config.Kafka.Ws2mschat.Topic)
+	cfg := config.Config.MQ.Ws2mschat
+	switch cfg.Type {
+	case "kafka":
+		rc.producer = kafka.NewKafkaProducer(cfg.Addr, cfg.Topic)
+	case "nsq":
+		p, err := nsq.NewNsqProducer(cfg.Addr[0], cfg.Topic)
+		if err != nil {
+			panic(err)
+		}
+		rc.producer = p
+	}
 	return &rc
 }
 
