@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -375,5 +374,5 @@ func init() {
 	if err = yaml.Unmarshal(bytes, &Config); err != nil {
 		panic(err.Error())
 	}
-	fmt.Println("load config: ", Config)
+	//fmt.Println("load config: ", Config)
 }
