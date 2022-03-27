@@ -216,7 +216,7 @@ func GetBlockUserById(userId string) (BlockUserInfo, error) {
 	user := db.User{
 		UserID: blockUser.UserId,
 	}
-	if err := dbConn.Find(&user).Error; err != nil {
+	if err := dbConn.Table("users").Find(&user).Error; err != nil {
 		return blockUserInfo, err
 	}
 	blockUserInfo.User.UserID = user.UserID
