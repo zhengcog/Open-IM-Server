@@ -32,7 +32,7 @@ type userServer struct {
 }
 
 func NewUserServer(port int) *userServer {
-	log.NewPrivateLog("user")
+	log.NewPrivateLog(constant.LogFileName)
 	return &userServer{
 		rpcPort:         port,
 		rpcRegisterName: config.Config.RpcRegisterName.OpenImUserName,
@@ -72,6 +72,30 @@ func (s *userServer) Run() {
 	log.NewInfo("0", "rpc  user success")
 }
 
+func syncPeerUserConversation(conversation *pbUser.Conversation, operationID string) error {
+	peerUserConversation := db.Conversation{
+		OwnerUserID:      conversation.UserID,
+		ConversationID:   "single_" + conversation.OwnerUserID,
+		ConversationType: constant.SingleChatType,
+		UserID:           conversation.OwnerUserID,
+		GroupID:          "",
+		RecvMsgOpt:       0,
+		UnreadCount:      0,
+		DraftTextTime:    0,
+		IsPinned:         false,
+		IsPrivateChat:    conversation.IsPrivateChat,
+		AttachedInfo:     "",
+		Ex:               "",
+	}
+	err := imdb.PeerUserSetConversation(peerUserConversation)
+	if err != nil {
+		log.NewError(operationID, utils.GetSelfFuncName(), "SetConversation error", err.Error())
+		return err
+	}
+	chat.ConversationSetPrivateNotification(operationID, conversation.OwnerUserID, conversation.UserID, conversation.IsPrivateChat)
+	return nil
+}
+
 func (s *userServer) GetUserInfo(ctx context.Context, req *pbUser.GetUserInfoReq) (*pbUser.GetUserInfoResp, error) {
 	log.NewInfo(req.OperationID, "GetUserInfo args ", req.String())
 	var userInfoList []*sdkws.UserInfo
@@ -88,63 +112,170 @@ func (s *userServer) GetUserInfo(ctx context.Context, req *pbUser.GetUserInfoReq
 			userInfoList = append(userInfoList, &userInfo)
 		}
 	} else {
-
 		return &pbUser.GetUserInfoResp{CommonResp: &pbUser.CommonResp{ErrCode: constant.ErrArgs.ErrCode, ErrMsg: constant.ErrArgs.ErrMsg}}, nil
 	}
 	log.NewInfo(req.OperationID, "GetUserInfo rpc return ", pbUser.GetUserInfoResp{CommonResp: &pbUser.CommonResp{}, UserInfoList: userInfoList})
 	return &pbUser.GetUserInfoResp{CommonResp: &pbUser.CommonResp{}, UserInfoList: userInfoList}, nil
 }
 
-func (s *userServer) SetReceiveMessageOpt(ctx context.Context, req *pbUser.SetReceiveMessageOptReq) (*pbUser.SetReceiveMessageOptResp, error) {
-	log.NewInfo(req.OperationID, "SetReceiveMessageOpt args ", req.String())
-	m := make(map[string]int, len(req.ConversationIDList))
-	for _, v := range req.ConversationIDList {
-		m[v] = int(req.Opt)
+func (s *userServer) BatchSetConversations(ctx context.Context, req *pbUser.BatchSetConversationsReq) (*pbUser.BatchSetConversationsResp, error) {
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "req: ", req.String())
+	if req.NotificationType == 0 {
+		req.NotificationType = constant.ConversationOptChangeNotification
 	}
-	err := db.DB.SetMultiConversationMsgOpt(req.FromUserID, m)
-	if err != nil {
-		log.NewError(req.OperationID, "SetMultiConversationMsgOpt failed ", err.Error(), req)
-		return &pbUser.SetReceiveMessageOptResp{CommonResp: &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}}, nil
+	resp := &pbUser.BatchSetConversationsResp{}
+	for _, v := range req.Conversations {
+		conversation := db.Conversation{}
+		if err := utils.CopyStructFields(&conversation, v); err != nil {
+			log.NewDebug(req.OperationID, utils.GetSelfFuncName(), v.String(), "CopyStructFields failed", err.Error())
+		}
+		if err := db.DB.SetSingleConversationRecvMsgOpt(req.OwnerUserID, v.ConversationID, v.RecvMsgOpt); err != nil {
+			log.NewError(req.OperationID, utils.GetSelfFuncName(), "cache failed, rpc return", err.Error())
+			resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+			return resp, nil
+		}
+		if err := imdb.SetConversation(conversation); err != nil {
+			log.NewError(req.OperationID, utils.GetSelfFuncName(), "SetConversation error", err.Error())
+			resp.Failed = append(resp.Failed, v.ConversationID)
+			continue
+		}
+		resp.Success = append(resp.Success, v.ConversationID)
+		// if is set private chat operation，then peer user need to sync and set tips\
+		if v.ConversationType == constant.SingleChatType && req.NotificationType == constant.ConversationPrivateChatNotification {
+			if err := syncPeerUserConversation(v, req.OperationID); err != nil {
+				log.NewError(req.OperationID, utils.GetSelfFuncName(), "syncPeerUserConversation", err.Error())
+			}
+		}
 	}
-	resp := pbUser.SetReceiveMessageOptResp{CommonResp: &pbUser.CommonResp{}}
-
-	for _, v := range req.ConversationIDList {
-		resp.ConversationOptResultList = append(resp.ConversationOptResultList, &pbUser.OptResult{ConversationID: v, Result: req.Opt})
-	}
-	chat.SetReceiveMessageOptNotification(req.OperationID, req.OpUserID, req.FromUserID)
-	log.NewInfo(req.OperationID, "SetReceiveMessageOpt rpc return ", resp.String())
-	return &resp, nil
+	chat.ConversationChangeNotification(req.OperationID, req.OwnerUserID)
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "rpc return", resp.String())
+	resp.CommonResp = &pbUser.CommonResp{}
+	return resp, nil
 }
 
-func (s *userServer) GetReceiveMessageOpt(ctx context.Context, req *pbUser.GetReceiveMessageOptReq) (*pbUser.GetReceiveMessageOptResp, error) {
-	log.NewInfo(req.OperationID, "GetReceiveMessageOpt args ", req.String())
-	m, err := db.DB.GetMultiConversationMsgOpt(req.FromUserID, req.ConversationIDList)
+func (s *userServer) GetAllConversations(ctx context.Context, req *pbUser.GetAllConversationsReq) (*pbUser.GetAllConversationsResp, error) {
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "req: ", req.String())
+	resp := &pbUser.GetAllConversationsResp{Conversations: []*pbUser.Conversation{}}
+	conversations, err := imdb.GetUserAllConversations(req.OwnerUserID)
 	if err != nil {
-		log.NewError(req.OperationID, "GetMultiConversationMsgOpt failed ", err.Error(), req.FromUserID, req.ConversationIDList)
-		return &pbUser.GetReceiveMessageOptResp{CommonResp: &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}}, nil
+		log.NewError(req.OperationID, utils.GetSelfFuncName(), "GetConversations error", err.Error())
+		resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+		return resp, nil
 	}
-	resp := pbUser.GetReceiveMessageOptResp{CommonResp: &pbUser.CommonResp{}}
-	for k, v := range m {
-		resp.ConversationOptResultList = append(resp.ConversationOptResultList, &pbUser.OptResult{ConversationID: k, Result: int32(v)})
+	if err = utils.CopyStructFields(&resp.Conversations, conversations); err != nil {
+		log.NewDebug(req.OperationID, utils.GetSelfFuncName(), "CopyStructFields error", err.Error())
 	}
-	log.NewInfo(req.OperationID, "GetReceiveMessageOpt rpc return ", resp.String())
-	return &resp, nil
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "rpc return", resp.String())
+	resp.CommonResp = &pbUser.CommonResp{}
+	return resp, nil
 }
 
-func (s *userServer) GetAllConversationMsgOpt(ctx context.Context, req *pbUser.GetAllConversationMsgOptReq) (*pbUser.GetAllConversationMsgOptResp, error) {
-	log.NewInfo(req.OperationID, "GetAllConversationMsgOpt args ", req.String())
-	m, err := db.DB.GetAllConversationMsgOpt(req.FromUserID)
+func (s *userServer) GetConversation(ctx context.Context, req *pbUser.GetConversationReq) (*pbUser.GetConversationResp, error) {
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "req: ", req.String())
+	resp := &pbUser.GetConversationResp{Conversation: &pbUser.Conversation{}}
+	conversation, err := imdb.GetConversation(req.OwnerUserID, req.ConversationID)
 	if err != nil {
-		log.NewError(req.OperationID, "GetAllConversationMsgOpt failed ", err.Error(), req.FromUserID)
-		return &pbUser.GetAllConversationMsgOptResp{CommonResp: &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}}, nil
+		log.NewError(req.OperationID, utils.GetSelfFuncName(), "GetConversation error", err.Error())
+		resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+		return resp, nil
 	}
-	resp := pbUser.GetAllConversationMsgOptResp{CommonResp: &pbUser.CommonResp{}}
-	for k, v := range m {
-		resp.ConversationOptResultList = append(resp.ConversationOptResultList, &pbUser.OptResult{ConversationID: k, Result: int32(v)})
+	if err := utils.CopyStructFields(resp.Conversation, &conversation); err != nil {
+		log.Debug(req.OperationID, utils.GetSelfFuncName(), "CopyStructFields error", conversation, err.Error())
 	}
-	log.NewInfo(req.OperationID, "GetAllConversationMsgOpt rpc return ", resp.String())
-	return &resp, nil
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "resp: ", resp.String())
+	resp.CommonResp = &pbUser.CommonResp{}
+	return resp, nil
 }
+
+func (s *userServer) GetConversations(ctx context.Context, req *pbUser.GetConversationsReq) (*pbUser.GetConversationsResp, error) {
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "req: ", req.String())
+	resp := &pbUser.GetConversationsResp{Conversations: []*pbUser.Conversation{}}
+	conversations, err := imdb.GetConversations(req.OwnerUserID, req.ConversationIDs)
+	if err != nil {
+		log.NewError(req.OperationID, utils.GetSelfFuncName(), "GetConversations error", err.Error())
+		resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+		return resp, nil
+	}
+	if err := utils.CopyStructFields(&resp.Conversations, conversations); err != nil {
+		log.NewDebug(req.OperationID, utils.GetSelfFuncName(), "CopyStructFields failed", conversations, err.Error())
+	}
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "resp: ", resp.String())
+	resp.CommonResp = &pbUser.CommonResp{}
+	return resp, nil
+}
+
+func (s *userServer) SetConversation(ctx context.Context, req *pbUser.SetConversationReq) (*pbUser.SetConversationResp, error) {
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "req: ", req.String())
+	if req.NotificationType == 0 {
+		req.NotificationType = constant.ConversationOptChangeNotification
+	}
+	resp := &pbUser.SetConversationResp{}
+	var conversation db.Conversation
+	if err := utils.CopyStructFields(&conversation, req.Conversation); err != nil {
+		log.NewDebug(req.OperationID, utils.GetSelfFuncName(), "CopyStructFields failed", *req.Conversation, err.Error())
+	}
+	if err := db.DB.SetSingleConversationRecvMsgOpt(req.Conversation.OwnerUserID, req.Conversation.ConversationID, req.Conversation.RecvMsgOpt); err != nil {
+		log.NewError(req.OperationID, utils.GetSelfFuncName(), "cache failed, rpc return", err.Error())
+		resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+		return resp, nil
+	}
+	err := imdb.SetConversation(conversation)
+	if err != nil {
+		log.NewError(req.OperationID, utils.GetSelfFuncName(), "SetConversation error", err.Error())
+		resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+		return resp, nil
+	}
+	// notification
+	if req.Conversation.ConversationType == constant.SingleChatType && req.NotificationType == constant.ConversationPrivateChatNotification {
+		//sync peer user conversation if conversation is singleChatType
+		if err := syncPeerUserConversation(req.Conversation, req.OperationID); err != nil {
+			log.NewError(req.OperationID, utils.GetSelfFuncName(), "syncPeerUserConversation", err.Error())
+			resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+			return resp, nil
+		}
+	} else {
+		chat.ConversationChangeNotification(req.OperationID, req.Conversation.OwnerUserID)
+	}
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "rpc return", resp.String())
+	resp.CommonResp = &pbUser.CommonResp{}
+	return resp, nil
+}
+
+func (s *userServer) SetRecvMsgOpt(ctx context.Context, req *pbUser.SetRecvMsgOptReq) (*pbUser.SetRecvMsgOptResp, error) {
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "req: ", req.String())
+	resp := &pbUser.SetRecvMsgOptResp{}
+	var conversation db.Conversation
+	if err := utils.CopyStructFields(&conversation, req); err != nil {
+		log.NewDebug(req.OperationID, utils.GetSelfFuncName(), "CopyStructFields failed", *req, err.Error())
+	}
+	if err := db.DB.SetSingleConversationRecvMsgOpt(req.OwnerUserID, req.ConversationID, req.RecvMsgOpt); err != nil {
+		log.NewError(req.OperationID, utils.GetSelfFuncName(), "cache failed, rpc return", err.Error())
+		resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+		return resp, nil
+	}
+	stringList := strings.Split(req.ConversationID, "_")
+	if len(stringList) > 1 {
+		switch stringList[0] {
+		case "single_":
+			conversation.UserID = stringList[1]
+			conversation.ConversationType = constant.SingleChatType
+		case "group":
+			conversation.GroupID = stringList[1]
+			conversation.ConversationType = constant.GroupChatType
+		}
+	}
+	err := imdb.SetRecvMsgOpt(conversation)
+	if err != nil {
+		log.NewError(req.OperationID, utils.GetSelfFuncName(), "SetConversation error", err.Error())
+		resp.CommonResp = &pbUser.CommonResp{ErrCode: constant.ErrDB.ErrCode, ErrMsg: constant.ErrDB.ErrMsg}
+		return resp, nil
+	}
+	chat.ConversationChangeNotification(req.OperationID, req.OwnerUserID)
+	log.NewInfo(req.OperationID, utils.GetSelfFuncName(), "resp: ", resp.String())
+	resp.CommonResp = &pbUser.CommonResp{}
+	return resp, nil
+}
+
 func (s *userServer) DeleteUsers(_ context.Context, req *pbUser.DeleteUsersReq) (*pbUser.DeleteUsersResp, error) {
 	log.NewInfo(req.OperationID, "DeleteUsers args ", req.String())
 	if !token_verify.IsMangerUserID(req.OpUserID) {

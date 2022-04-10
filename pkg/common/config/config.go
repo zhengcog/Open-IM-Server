@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -21,7 +22,7 @@ var Config config
 type callBackConfig struct {
 	Enable                 bool `yaml:"enable"`
 	CallbackTimeOut        int  `yaml:"callbackTimeOut"`
-	CallbackFailedContinue bool `CallbackFailedContinue`
+	CallbackFailedContinue bool `yaml:"callbackFailedContinue"`
 }
 
 type config struct {
@@ -63,6 +64,7 @@ type config struct {
 			SecretAccessKey string `yaml:"secretAccessKey"`
 		} `yaml:"minio"`
 	}
+
 	Mysql struct {
 		DBAddress      []string `yaml:"dbMysqlAddress"`
 		DBUserName     string   `yaml:"dbMysqlUserName"`
@@ -113,6 +115,7 @@ type config struct {
 		OpenImAuthName               string `yaml:"openImAuthName"`
 		OpenImMessageCMSName         string `yaml:"openImMessageCMSName"`
 		OpenImAdminCMSName           string `yaml:"openImAdminCMSName"`
+		OpenImOfficeName             string `yaml:"openImOfficeName"`
 	}
 	Etcd struct {
 		EtcdSchema string   `yaml:"etcdSchema"`
@@ -150,12 +153,21 @@ type config struct {
 				AccessID  string `yaml:"accessID"`
 				SecretKey string `yaml:"secretKey"`
 			}
+			Enable bool `yaml:"enable"`
 		}
 		Jpns struct {
 			AppKey       string `yaml:"appKey"`
 			MasterSecret string `yaml:"masterSecret"`
 			PushUrl      string `yaml:"pushUrl"`
 			PushIntent   string `yaml:"pushIntent"`
+			Enable       bool   `yaml:"enable"`
+		}
+		Getui struct {
+			PushUrl      string `yaml:"pushUrl"`
+			AppKey       string `yaml:"appKey"`
+			Enable       bool   `yaml:"enable"`
+			Intent       string `yaml:"intent"`
+			MasterSecret string `yaml:"masterSecret"`
 		}
 	}
 	Manager struct {
@@ -183,8 +195,8 @@ type config struct {
 		AccessSecret string `yaml:"accessSecret"`
 		AccessExpire int64  `yaml:"accessExpire"`
 	}
-	MessageJudge struct {
-		IsJudgeFriend bool `yaml:"isJudgeFriend"`
+	MessageVerify struct {
+		FriendVerify bool `yaml:"friendVerify"`
 	}
 	IOSPush struct {
 		PushSound  string `yaml:"pushSound"`
@@ -260,6 +272,37 @@ type config struct {
 			OfflinePush  POfflinePush  `yaml:"offlinePush"`
 			DefaultTips  PDefaultTips  `yaml:"defaultTips"`
 		} `yaml:"memberEnter"`
+
+		GroupDismissed struct {
+			Conversation PConversation `yaml:"conversation"`
+			OfflinePush  POfflinePush  `yaml:"offlinePush"`
+			DefaultTips  PDefaultTips  `yaml:"defaultTips"`
+		} `yaml:"groupDismissed"`
+
+		GroupMuted struct {
+			Conversation PConversation `yaml:"conversation"`
+			OfflinePush  POfflinePush  `yaml:"offlinePush"`
+			DefaultTips  PDefaultTips  `yaml:"defaultTips"`
+		} `yaml:"groupMuted"`
+
+		GroupCancelMuted struct {
+			Conversation PConversation `yaml:"conversation"`
+			OfflinePush  POfflinePush  `yaml:"offlinePush"`
+			DefaultTips  PDefaultTips  `yaml:"defaultTips"`
+		} `yaml:"groupCancelMuted"`
+
+		GroupMemberMuted struct {
+			Conversation PConversation `yaml:"conversation"`
+			OfflinePush  POfflinePush  `yaml:"offlinePush"`
+			DefaultTips  PDefaultTips  `yaml:"defaultTips"`
+		} `yaml:"groupMemberMuted"`
+
+		GroupMemberCancelMuted struct {
+			Conversation PConversation `yaml:"conversation"`
+			OfflinePush  POfflinePush  `yaml:"offlinePush"`
+			DefaultTips  PDefaultTips  `yaml:"defaultTips"`
+		} `yaml:"groupMemberCancelMuted"`
+
 		////////////////////////user///////////////////////
 		UserInfoUpdated struct {
 			Conversation PConversation `yaml:"conversation"`
@@ -316,6 +359,14 @@ type config struct {
 			OfflinePush  POfflinePush  `yaml:"offlinePush"`
 			DefaultTips  PDefaultTips  `yaml:"defaultTips"`
 		} `yaml:"conversationOptUpdate"`
+		ConversationSetPrivate struct {
+			Conversation PConversation `yaml:"conversation"`
+			OfflinePush  POfflinePush  `yaml:"offlinePush"`
+			DefaultTips  struct {
+				OpenTips  string `yaml:"openTips"`
+				CloseTips string `yaml:"closeTips"`
+			} `yaml:"defaultTips"`
+		} `yaml:"conversationSetPrivate"`
 	}
 	Demo struct {
 		Port         []int `yaml:"openImDemoPort"`
@@ -335,6 +386,10 @@ type config struct {
 			SmtpPort                int    `yaml:"smtpPort"`
 		}
 	}
+	Rtc struct {
+		Port    int    `yaml:"port"`
+		Address string `yaml:"address"`
+	} `yaml:"rtc"`
 }
 type PConversation struct {
 	ReliabilityLevel int  `yaml:"reliabilityLevel"`
@@ -374,5 +429,5 @@ func init() {
 	if err = yaml.Unmarshal(bytes, &Config); err != nil {
 		panic(err.Error())
 	}
-	//fmt.Println("load config: ", Config)
+	fmt.Println("load config: ", Config)
 }

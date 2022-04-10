@@ -56,14 +56,13 @@ const (
 	FriendRemarkSetNotification           = 1206 //set_friend_remark?
 	BlackAddedNotification                = 1207 //add_black
 	BlackDeletedNotification              = 1208 //remove_black
-	ConversationOptChangeNotification     = 1300 // change conversation opt
+
+	ConversationOptChangeNotification = 1300 // change conversation opt
 
 	UserNotificationBegin       = 1301
 	UserInfoUpdatedNotification = 1303 //SetSelfInfoTip             = 204
-	ConversationNotification    = 1307
-	ConversationNotNotification = 1308
-	ConversationDefault         = 0
 	UserNotificationEnd         = 1399
+	OANotification              = 1400
 
 	GroupNotificationBegin = 1500
 
@@ -77,7 +76,23 @@ const (
 	MemberKickedNotification             = 1508
 	MemberInvitedNotification            = 1509
 	MemberEnterNotification              = 1510
-	NotificationEnd                      = 2000
+	GroupDismissedNotification           = 1511
+	GroupMemberMutedNotification         = 1512
+	GroupMemberCancelMutedNotification   = 1513
+	GroupMutedNotification               = 1514
+	GroupCancelMutedNotification         = 1515
+
+	SignalingNotificationBegin = 1600
+	SignalingNotification      = 1601
+	SignalingNotificationEnd   = 1699
+
+	ConversationPrivateChatNotification = 1701
+
+	NotificationEnd = 2000
+
+	//status
+	MsgNormal  = 1
+	MsgDeleted = 4
 
 	//MsgFrom
 	UserMsgType = 100
@@ -86,6 +101,8 @@ const (
 	//SessionType
 	SingleChatType = 1
 	GroupChatType  = 2
+
+	NotificationChatType = 4
 	//token
 	NormalToken  = 0
 	InValidToken = 1
@@ -113,17 +130,21 @@ const (
 	ReceiveNotNotifyMessage = 2
 
 	//OptionsKey
-	IsHistory            = "history"
-	IsPersistent         = "persistent"
-	IsOfflinePush        = "offlinePush"
-	IsUnreadCount        = "unreadCount"
-	IsConversationUpdate = "conversationUpdate"
-	IsSenderSync         = "senderSync"
+	IsHistory                  = "history"
+	IsPersistent               = "persistent"
+	IsOfflinePush              = "offlinePush"
+	IsUnreadCount              = "unreadCount"
+	IsConversationUpdate       = "conversationUpdate"
+	IsSenderSync               = "senderSync"
+	IsNotPrivate               = "notPrivate"
+	IsSenderConversationUpdate = "senderConversationUpdate"
 
 	//GroupStatus
-	GroupOk             = 0
-	GroupBanChat        = 1
-	GroupDisband        = 2
+	GroupOk              = 0
+	GroupBanChat         = 1
+	GroupStatusDismissed = 2
+	GroupStatusMuted     = 3
+
 	GroupBaned          = 3
 	GroupBanPrivateChat = 4
 
@@ -151,6 +172,11 @@ const (
 	//callback callbackHandleCode
 	CallbackHandleSuccess = 0
 	CallbackHandleFailed  = 1
+
+	// minioUpload
+	OtherType = 1
+	VideoType = 2
+	ImageType = 3
 )
 
 var ContentType2PushContent = map[int64]string{
@@ -191,7 +217,7 @@ const (
 const FriendAcceptTip = "You have successfully become friends, so start chatting"
 
 func GroupIsBanChat(status int32) bool {
-	if status != GroupBanChat {
+	if status != GroupStatusMuted {
 		return false
 	}
 	return true
@@ -205,3 +231,5 @@ func GroupIsBanPrivateChat(status int32) bool {
 }
 
 const BigVersion = "v3"
+
+const LogFileName = "OpenIM.log"

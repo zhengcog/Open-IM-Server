@@ -7,6 +7,7 @@ import (
 	"Open_IM/pkg/common/log"
 	"Open_IM/pkg/grpc-etcdv3/getcdv3"
 	pbChat "Open_IM/pkg/proto/chat"
+	rpc "Open_IM/pkg/proto/friend"
 	pbGroup "Open_IM/pkg/proto/group"
 	sdk_ws "Open_IM/pkg/proto/sdk_ws"
 	"Open_IM/pkg/utils"
@@ -41,16 +42,45 @@ type MsgCallBackResp struct {
 	}
 }
 
-func userRelationshipVerification(data *pbChat.SendMsgReq) {
-
-	//etcdConn := getcdv3.GetConn(config.Config.Etcd.EtcdSchema, strings.Join(config.Config.Etcd.EtcdAddr, ","), config.Config.RpcRegisterName.OpenImOfflineMessageName)
-	//client := pbChat.NewChatClient(etcdConn)
-	//reply, err := client.SendMsg(context.Background(), &req)
-	//if err != nil {
-	//	log.NewError(req.OperationID, "SendMsg rpc failed, ", req.String(), err.Error())
-	//} else if reply.ErrCode != 0 {
-	//	log.NewError(req.OperationID, "SendMsg rpc failed, ", req.String())
-	//}
+func userRelationshipVerification(data *pbChat.SendMsgReq) (bool, int32, string) {
+	if data.MsgData.SessionType == constant.GroupChatType {
+		return true, 0, ""
+	}
+	log.NewDebug(data.OperationID, config.Config.MessageVerify.FriendVerify)
+	req := &rpc.IsInBlackListReq{CommID: &rpc.CommID{}}
+	req.CommID.OperationID = data.OperationID
+	req.CommID.OpUserID = data.MsgData.RecvID
+	req.CommID.FromUserID = data.MsgData.RecvID
+	req.CommID.ToUserID = data.MsgData.SendID
+	etcdConn := getcdv3.GetConn(config.Config.Etcd.EtcdSchema, strings.Join(config.Config.Etcd.EtcdAddr, ","), config.Config.RpcRegisterName.OpenImFriendName)
+	client := rpc.NewFriendClient(etcdConn)
+	reply, err := client.IsInBlackList(context.Background(), req)
+	if err != nil {
+		log.NewDebug(data.OperationID, "IsInBlackListReq rpc failed, ", req.String(), err.Error())
+	} else if reply.Response == true {
+		log.NewDebug(data.OperationID, "IsInBlackListReq  ", req.String())
+		return false, 600, "in black list"
+	}
+	log.NewDebug(data.OperationID, config.Config.MessageVerify.FriendVerify)
+	if config.Config.MessageVerify.FriendVerify {
+		friendReq := &rpc.IsFriendReq{CommID: &rpc.CommID{}}
+		friendReq.CommID.OperationID = data.OperationID
+		friendReq.CommID.OpUserID = data.MsgData.RecvID
+		friendReq.CommID.FromUserID = data.MsgData.RecvID
+		friendReq.CommID.ToUserID = data.MsgData.SendID
+		friendReply, err := client.IsFriend(context.Background(), friendReq)
+		if err != nil {
+			log.NewDebug(data.OperationID, "IsFriendReq rpc failed, ", req.String(), err.Error())
+			return true, 0, ""
+		} else if friendReply.Response == false {
+			log.NewDebug(data.OperationID, "not friend  ", req.String())
+			return friendReply.Response, 601, "not friend"
+		}
+		log.NewDebug(data.OperationID, config.Config.MessageVerify.FriendVerify, friendReply.Response)
+		return true, 0, ""
+	} else {
+		return true, 0, ""
+	}
 }
 func (rpc *rpcChat) encapsulateMsgData(msg *sdk_ws.MsgData) {
 	msg.ServerMsgID = GetMsgID(msg.SendID)
@@ -86,6 +116,7 @@ func (rpc *rpcChat) encapsulateMsgData(msg *sdk_ws.MsgData) {
 	case constant.HasReadReceipt:
 		log.Info("", "this is a test start", msg, msg.Options)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsConversationUpdate, false)
+		utils.SetSwitchFromOptions(msg.Options, constant.IsSenderConversationUpdate, false)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsUnreadCount, false)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsOfflinePush, false)
 		log.Info("", "this is a test end", msg, msg.Options)
@@ -94,6 +125,7 @@ func (rpc *rpcChat) encapsulateMsgData(msg *sdk_ws.MsgData) {
 		utils.SetSwitchFromOptions(msg.Options, constant.IsPersistent, false)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsSenderSync, false)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsConversationUpdate, false)
+		utils.SetSwitchFromOptions(msg.Options, constant.IsSenderConversationUpdate, false)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsUnreadCount, false)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsOfflinePush, false)
 
@@ -102,12 +134,15 @@ func (rpc *rpcChat) encapsulateMsgData(msg *sdk_ws.MsgData) {
 func (rpc *rpcChat) SendMsg(_ context.Context, pb *pbChat.SendMsgReq) (*pbChat.SendMsgResp, error) {
 	replay := pbChat.SendMsgResp{}
 	log.NewDebug(pb.OperationID, "rpc sendMsg come here", pb.String())
-	userRelationshipVerification(pb)
+	flag, errCode, errMsg := userRelationshipVerification(pb)
+	if !flag {
+		return returnMsg(&replay, pb, errCode, errMsg, "", 0)
+	}
 	//if !utils.VerifyToken(pb.Token, pb.SendID) {
 	//	return returnMsg(&replay, pb, http.StatusUnauthorized, "token validate err,not authorized", "", 0)
 	rpc.encapsulateMsgData(pb.MsgData)
 	log.Info("", "this is a test MsgData ", pb.MsgData)
-	msgToMQ := pbChat.MsgDataToMQ{Token: pb.Token, OperationID: pb.OperationID}
+	msgToMQ := pbChat.MsgDataToMQ{Token: pb.Token, OperationID: pb.OperationID, MsgData: pb.MsgData}
 	//options := utils.JsonStringToMap(pbData.Options)
 	isHistory := utils.GetSwitchFromOptions(pb.MsgData.Options, constant.IsHistory)
 	mReq := MsgCallBackReq{
@@ -246,6 +281,23 @@ func (rpc *rpcChat) SendMsg(_ context.Context, pb *pbChat.SendMsgReq) (*pbChat.S
 			log.NewError(pb.OperationID, utils.GetSelfFuncName(), "callbackAfterSendGroupMsg failed", err.Error())
 		}
 		return returnMsg(&replay, pb, 0, "", msgToMQ.MsgData.ServerMsgID, msgToMQ.MsgData.SendTime)
+	case constant.NotificationChatType:
+		msgToMQ.MsgData = pb.MsgData
+		log.NewInfo(msgToMQ.OperationID, msgToMQ)
+		err1 := rpc.sendMsgToKafka(&msgToMQ, msgToMQ.MsgData.RecvID)
+		if err1 != nil {
+			log.NewError(msgToMQ.OperationID, "kafka send msg err:RecvID", msgToMQ.MsgData.RecvID, msgToMQ.String())
+			return returnMsg(&replay, pb, 201, "kafka send msg err", "", 0)
+		}
+
+		if msgToMQ.MsgData.SendID != msgToMQ.MsgData.RecvID { //Filter messages sent to yourself
+			err2 := rpc.sendMsgToKafka(&msgToMQ, msgToMQ.MsgData.SendID)
+			if err2 != nil {
+				log.NewError(msgToMQ.OperationID, "kafka send msg err:SendID", msgToMQ.MsgData.SendID, msgToMQ.String())
+				return returnMsg(&replay, pb, 201, "kafka send msg err", "", 0)
+			}
+		}
+		return returnMsg(&replay, pb, 0, "", msgToMQ.MsgData.ServerMsgID, msgToMQ.MsgData.SendTime)
 	default:
 		return returnMsg(&replay, pb, 203, "unkonwn sessionType", "", 0)
 	}
@@ -274,7 +326,7 @@ func returnMsg(replay *pbChat.SendMsgResp, pb *pbChat.SendMsgReq, errCode int32,
 
 func modifyMessageByUserMessageReceiveOpt(userID, sourceID string, sessionType int, pb *pbChat.SendMsgReq) bool {
 	conversationID := utils.GetConversationIDBySessionType(sourceID, sessionType)
-	opt, err := db.DB.GetSingleConversationMsgOpt(userID, conversationID)
+	opt, err := db.DB.GetSingleConversationRecvMsgOpt(userID, conversationID)
 	if err != nil && err != redis.ErrNil {
 		log.NewError(pb.OperationID, "GetSingleConversationMsgOpt from redis err", conversationID, pb.String(), err.Error())
 		return true
@@ -470,14 +522,56 @@ func Notification(n *NotificationMsg) {
 		ex = config.Config.Notification.ConversationOptUpdate.OfflinePush.Ext
 		reliabilityLevel = config.Config.Notification.ConversationOptUpdate.Conversation.ReliabilityLevel
 		unReadCount = config.Config.Notification.ConversationOptUpdate.Conversation.UnreadCount
+
+	case constant.GroupDismissedNotification:
+		pushSwitch = config.Config.Notification.GroupDismissed.OfflinePush.PushSwitch
+		title = config.Config.Notification.GroupDismissed.OfflinePush.Title
+		desc = config.Config.Notification.GroupDismissed.OfflinePush.Desc
+		ex = config.Config.Notification.GroupDismissed.OfflinePush.Ext
+		reliabilityLevel = config.Config.Notification.GroupDismissed.Conversation.ReliabilityLevel
+		unReadCount = config.Config.Notification.GroupDismissed.Conversation.UnreadCount
+
+	case constant.GroupMutedNotification:
+		pushSwitch = config.Config.Notification.GroupMuted.OfflinePush.PushSwitch
+		title = config.Config.Notification.GroupMuted.OfflinePush.Title
+		desc = config.Config.Notification.GroupMuted.OfflinePush.Desc
+		ex = config.Config.Notification.GroupMuted.OfflinePush.Ext
+		reliabilityLevel = config.Config.Notification.GroupMuted.Conversation.ReliabilityLevel
+		unReadCount = config.Config.Notification.GroupMuted.Conversation.UnreadCount
+
+	case constant.GroupCancelMutedNotification:
+		pushSwitch = config.Config.Notification.GroupCancelMuted.OfflinePush.PushSwitch
+		title = config.Config.Notification.GroupCancelMuted.OfflinePush.Title
+		desc = config.Config.Notification.GroupCancelMuted.OfflinePush.Desc
+		ex = config.Config.Notification.GroupCancelMuted.OfflinePush.Ext
+		reliabilityLevel = config.Config.Notification.GroupCancelMuted.Conversation.ReliabilityLevel
+		unReadCount = config.Config.Notification.GroupCancelMuted.Conversation.UnreadCount
+
+	case constant.GroupMemberMutedNotification:
+		pushSwitch = config.Config.Notification.GroupMemberMuted.OfflinePush.PushSwitch
+		title = config.Config.Notification.GroupMemberMuted.OfflinePush.Title
+		desc = config.Config.Notification.GroupMemberMuted.OfflinePush.Desc
+		ex = config.Config.Notification.GroupMemberMuted.OfflinePush.Ext
+		reliabilityLevel = config.Config.Notification.GroupMemberMuted.Conversation.ReliabilityLevel
+		unReadCount = config.Config.Notification.GroupMemberMuted.Conversation.UnreadCount
+
+	case constant.GroupMemberCancelMutedNotification:
+		pushSwitch = config.Config.Notification.GroupMemberCancelMuted.OfflinePush.PushSwitch
+		title = config.Config.Notification.GroupMemberCancelMuted.OfflinePush.Title
+		desc = config.Config.Notification.GroupMemberCancelMuted.OfflinePush.Desc
+		ex = config.Config.Notification.GroupMemberCancelMuted.OfflinePush.Ext
+		reliabilityLevel = config.Config.Notification.GroupMemberCancelMuted.Conversation.ReliabilityLevel
+		unReadCount = config.Config.Notification.GroupMemberCancelMuted.Conversation.UnreadCount
 	}
 	switch reliabilityLevel {
 	case constant.UnreliableNotification:
 		utils.SetSwitchFromOptions(msg.Options, constant.IsHistory, false)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsPersistent, false)
 		utils.SetSwitchFromOptions(msg.Options, constant.IsConversationUpdate, false)
+		utils.SetSwitchFromOptions(msg.Options, constant.IsSenderConversationUpdate, false)
 	case constant.ReliableNotificationNoMsg:
 		utils.SetSwitchFromOptions(msg.Options, constant.IsConversationUpdate, false)
+		utils.SetSwitchFromOptions(msg.Options, constant.IsSenderConversationUpdate, false)
 	case constant.ReliableNotificationMsg:
 
 	}
@@ -494,6 +588,6 @@ func Notification(n *NotificationMsg) {
 	if err != nil {
 		log.NewError(req.OperationID, "SendMsg rpc failed, ", req.String(), err.Error())
 	} else if reply.ErrCode != 0 {
-		log.NewError(req.OperationID, "SendMsg rpc failed, ", req.String())
+		log.NewError(req.OperationID, "SendMsg rpc failed, ", req.String(), reply.ErrCode, reply.ErrMsg)
 	}
 }

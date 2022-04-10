@@ -73,7 +73,7 @@ endpoints:
   rpc_statistic: openim_rpc_statistic
   rpc_admin_cms: openim_rpc_admin_cms
   rpc_message_cms: openim_rpc_admin_cms
-
+  rpc_office: openim_rpc_office
 
 api:
   openImApiPort: [ 10000 ] #api服务端口，默认即可，需要开放此端口或做nginx转发
@@ -81,7 +81,7 @@ cmsapi:
   openImCmsApiPort: [ 8000 ] #管理后台api服务端口，默认即可，需要开放此端口或做nginx转发
 sdk:
   openImSdkWsPort: [ 30000 ] #jssdk服务端口，默认即可，项目中使用jssdk才需开放此端口或做nginx转发
-
+#对象存储服务，以下配置二选一，目前支持两种，腾讯云和minio，二者配置好其中一种即可（如果使用minio参考https://doc.rentsoft.cn/#/qa/minio搭建minio服务器）
 credential: #腾讯cos，发送图片、视频、文件时需要，请自行申请后替换，必须修改
   tencent:
     appID: 1302656840
@@ -89,10 +89,10 @@ credential: #腾讯cos，发送图片、视频、文件时需要，请自行申�
     bucket: echat-1302656840
     secretID: AKIDGNYVChzIQinu7QEgtNp0hnNgqcV8vZTC
     secretKey: kz15vW83qM6dBUWIq681eBZA0c0vlIbe
-  minio: #MinIO 发送图片、视频、文件时需要，请自行申请后替换，必须修改。 客户端初始化时相应改动
+  minio: #MinIO 发送图片、视频、文件时需要，请自行申请后替换，必须修改。 客户端初始化InitSDK，中 object_storage参数为minio
     bucket: openim
     location: us-east-1
-    endpoint: http://127.0.0.1:9000
+    endpoint: http://121.37.25.71:9000
     accessKeyID: user12345
     secretAccessKey: key12345
   ali: # ali oss
@@ -119,6 +119,7 @@ rpcport: #rpc服务端口 默认即可
   openImStatisticsPort: [ 10800 ]
   openImMessageCmsPort: [ 10900 ]
   openImAdminCmsPort: [ 11000 ]
+  openImOfficePort: [ 11100 ]
   c2c:
     callbackBeforeSendMsg:
       switch: false
@@ -140,13 +141,14 @@ rpcregistername: #rpc注册服务名，默认即可
   OpenImStatisticsName: Statistics
   OpenImMessageCMSName: MessageCMS
   openImAdminCMSName: AdminCMS
+  openImOfficeName: Office
 
 log:
   storageLocation: ../logs/
   rotationTime: 24
   remainRotationCount: 3 #日志数量
   #日志级别 6表示全都打印，测试阶段建议设置为6
-  remainLogLevel: 4
+  remainLogLevel: 6
   elasticSearchSwitch: false
   elasticSearchAddr: [ 127.0.0.1:9201 ]
   elasticSearchUser: ""
@@ -163,6 +165,7 @@ longconnsvr:
   websocketMaxMsgLen: 4096
   websocketTimeOut: 10
 
+## 推送只能开启一个
 push:
   tpns: #腾讯推送，暂未测试 暂不要使用
     ios:
@@ -171,11 +174,22 @@ push:
     android:
       accessID: 111
       secretKey: 111
+    enable: false
   jpns: #极光推送 在极光后台申请后，修改以下四项，必须修改
     appKey: cf47465a368f24c659608e7e
     masterSecret: 02204efe3f3832947a236ee5
     pushUrl: "https://api.jpush.cn/v3/push"
     pushIntent: "intent:#Intent;component=io.openim.app.enterprisechat/io.openim.app.enterprisechat.MainActivity;end"
+    enable: true
+  getui:  #个推推送，暂未测试 暂不要使用
+    pushUrl: "https://restapi.getui.com/v2/$appId"
+    masterSecret: ""
+    appKey: ""
+    intent: ""
+    enable: false
+
+
+
 manager:
   #app管理员userID和对应的secret  建议修改。 用于管理后台登录，也可以用户管理后台对应的api
   appManagerUid: [ "openIM123456","openIM654321", "openIM333", "openIMAdmin"]
@@ -193,6 +207,7 @@ tokenpolicy:
   accessExpire: 3650 #token过期时间（天） 默认即可
 messageverify:
   friendVerify: false
+
 #  c2c:
 #    callbackBeforeSendMsg:
 #      switch: false
@@ -214,21 +229,21 @@ callback:
   callbackbeforeSendSingleMsg:
     enable: false # 回调是否启用
     callbackTimeOut: 2 # 回调超时时间
-    CallbackFailedContinue: true # 回调超时是否继续执行代码
+    callbackFailedContinue: true # 回调超时是否继续执行代码
   callbackAfterSendSingleMsg:
     enable: false
     callbackTimeOut: 2
   callbackBeforeSendGroupMsg:
     enable: false
     callbackTimeOut: 2
-    CallbackFailedContinue: true
+    callbackFailedContinue: true
   callbackAfterSendGroupMsg:
     enable: false
     callbackTimeOut: 2
   callbackWordFilter:
     enable: false
     callbackTimeOut: 2
-    CallbackFailedContinue: true
+    callbackFailedContinue: true
 
 
 notification:
@@ -352,6 +367,67 @@ notification:
     defaultTips:
       tips: "entered the group"  # group info changed by xx
 
+  groupDismissed:
+    conversation:
+      reliabilityLevel: 3
+      unreadCount: true
+    offlinePush:
+      switch: false
+      title: "groupDismissed title"
+      desc: "groupDismissed desc"
+      ext: "groupDismissed ext"
+    defaultTips:
+      tips: "group dismissed"
+
+
+  groupMuted:
+    conversation:
+      reliabilityLevel: 3
+      unreadCount: true
+    offlinePush:
+      switch: false
+      title: "groupMuted title"
+      desc: "groupMuted desc"
+      ext: "groupMuted ext"
+    defaultTips:
+      tips: "group Muted"
+
+  groupCancelMuted:
+    conversation:
+      reliabilityLevel: 3
+      unreadCount: true
+    offlinePush:
+      switch: false
+      title: "groupCancelMuted title"
+      desc: "groupCancelMuted desc"
+      ext: "groupCancelMuted ext"
+    defaultTips:
+      tips: "group Cancel Muted"
+
+
+  groupMemberMuted:
+    conversation:
+      reliabilityLevel: 3
+      unreadCount: true
+    offlinePush:
+      switch: false
+      title: "groupMemberMuted title"
+      desc: "groupMemberMuted desc"
+      ext: "groupMemberMuted ext"
+    defaultTips:
+      tips: "group Member Muted"
+
+  groupMemberCancelMuted:
+    conversation:
+      reliabilityLevel: 3
+      unreadCount: true
+    offlinePush:
+      switch: false
+      title: "groupMemberCancelMuted title"
+      desc: "groupMemberCancelMuted desc"
+      ext: "groupMemberCancelMuted ext"
+    defaultTips:
+      tips: "group Member Cancel Muted"
   #############################friend#################################
 
   friendApplicationAdded:
@@ -487,6 +563,19 @@ notification:
       defaultTips:
         tips: "conversation opt update"
 
+  conversationSetPrivate:
+    conversation:
+      reliabilityLevel: 2
+      unreadCount: true
+    offlinePush:
+      switch: true
+      title: "burn after reading"
+      desc: "burn after reading"
+      ext: "burn after reading"
+    defaultTips:
+      openTips: "burn after reading was opened"
+      closeTips: "burn after reading was closed"
+
 
 
 #---------------demo configuration---------------------#
@@ -511,6 +600,6 @@ demo:
     smtpAddr: "smtp.qq.com"
     smtpPort: 25   #需开放此端口 出口方向
 
-
-
-
+rtc:
+  port: 11300
+  address: 127.0.0.1

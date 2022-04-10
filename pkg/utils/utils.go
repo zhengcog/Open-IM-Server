@@ -3,9 +3,11 @@ package utils
 import (
 	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
+	"math/rand"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // copy a by b  b->a
@@ -37,6 +39,8 @@ func cleanUpFuncName(funcName string) string {
 	}
 	return funcName[end+1:]
 }
+
+//Get the intersection of two slices
 func Intersect(slice1, slice2 []uint32) []uint32 {
 	m := make(map[uint32]bool)
 	n := make([]uint32, 0)
@@ -51,6 +55,8 @@ func Intersect(slice1, slice2 []uint32) []uint32 {
 	}
 	return n
 }
+
+//Get the diff of two slices
 func Difference(slice1, slice2 []uint32) []uint32 {
 	m := make(map[uint32]bool)
 	n := make([]uint32, 0)
@@ -70,4 +76,20 @@ func Difference(slice1, slice2 []uint32) []uint32 {
 		}
 	}
 	return n
+}
+func OperationIDGenerator() string {
+	return strconv.FormatInt(time.Now().UnixNano()+int64(rand.Uint32()), 10)
+}
+
+func RemoveRepeatedStringInList(slc []string) []string {
+	var result []string
+	tempMap := map[string]byte{}
+	for _, e := range slc {
+		l := len(tempMap)
+		tempMap[e] = 0
+		if len(tempMap) != l {
+			result = append(result, e)
+		}
+	}
+	return result
 }

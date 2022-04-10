@@ -101,7 +101,7 @@ func GetClaimFromToken(tokensString string) (*Claims, error) {
 }
 
 func IsAppManagerAccess(token string, OpUserID string) bool {
-	claims, err := ParseToken(token)
+	claims, err := ParseToken(token, "")
 	if err != nil {
 		return false
 	}
@@ -129,46 +129,48 @@ func CheckAccess(OpUserID string, OwnerUserID string) bool {
 	return false
 }
 
-func GetUserIDFromToken(token string) (bool, string) {
-	claims, err := ParseToken(token)
+func GetUserIDFromToken(token string, operationID string) (bool, string) {
+	claims, err := ParseToken(token, operationID)
 	if err != nil {
+		log.Error(operationID, "ParseToken failed, ", err.Error(), token)
 		return false, ""
 	}
 	return true, claims.UID
 }
 
-func ParseToken(tokensString string) (claims *Claims, err error) {
-
+func ParseToken(tokensString, operationID string) (claims *Claims, err error) {
 	claims, err = GetClaimFromToken(tokensString)
 	if err != nil {
-		log.NewError("", "token validate err", err.Error())
+		log.NewError(operationID, "token validate err", err.Error(), tokensString)
 		return nil, err
 	}
 
 	m, err := commonDB.DB.GetTokenMapByUidPid(claims.UID, claims.Platform)
 	if err != nil {
-		log.NewError("", "get token from redis err", err.Error())
+		log.NewError(operationID, "get token from redis err", err.Error(), tokensString)
 		return nil, &constant.ErrTokenInvalid
 	}
 	if m == nil {
-		log.NewError("", "get token from redis err", "m is nil")
+		log.NewError(operationID, "get token from redis err", "m is nil", tokensString)
 		return nil, &constant.ErrTokenInvalid
 	}
 	if v, ok := m[tokensString]; ok {
 		switch v {
 		case constant.NormalToken:
-			log.NewDebug("", "this is normal return", claims)
+			log.NewDebug(operationID, "this is normal return", claims)
 			return claims, nil
 		case constant.InValidToken:
 			return nil, &constant.ErrTokenInvalid
 		case constant.KickedToken:
-			return nil, &constant.ErrTokenInvalid
+			log.Error(operationID, "this token has been kicked by other same terminal ", constant.ErrTokenKicked)
+			return nil, &constant.ErrTokenKicked
 		case constant.ExpiredToken:
 			return nil, &constant.ErrTokenExpired
 		default:
 			return nil, &constant.ErrTokenUnknown
 		}
 	}
+	log.NewError(operationID, "redis token map not find", constant.ErrTokenUnknown)
 	return nil, &constant.ErrTokenUnknown
 }
 
@@ -194,13 +196,28 @@ func ParseRedisInterfaceToken(redisToken interface{}) (*Claims, error) {
 
 //Validation token, false means failure, true means successful verification
 func VerifyToken(token, uid string) (bool, error) {
-	claims, err := ParseToken(token)
+	claims, err := ParseToken(token, "")
 	if err != nil {
 		return false, err
 	}
 	if claims.UID != uid {
 		return false, &constant.ErrTokenUnknown
 	}
+
 	log.NewDebug("", claims.UID, claims.Platform)
 	return true, nil
+}
+func WsVerifyToken(token, uid string, platformID string) (bool, error, string) {
+	claims, err := ParseToken(token, "")
+	if err != nil {
+		return false, err, "parse token err"
+	}
+	if claims.UID != uid {
+		return false, &constant.ErrTokenUnknown, "uid is not same to token uid"
+	}
+	if claims.Platform != constant.PlatformIDToName(utils.StringToInt32(platformID)) {
+		return false, &constant.ErrTokenUnknown, "platform is not same to token platform"
+	}
+	log.NewDebug("", claims.UID, claims.Platform)
+	return true, nil, ""
 }
